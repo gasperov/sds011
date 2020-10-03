@@ -57,7 +57,7 @@ $.getJSON("/data.json", function(data) {
 			y: data.pm10[i]
 		});
 	}
-	options.title.text = data.last
+	options.title.text = data.last + " " + data.pm25.length
 	$("#chartContainer").CanvasJSChart(options);
 });
 $.getJSON("/files.json", function addData(data) {
