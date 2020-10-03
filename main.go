@@ -20,7 +20,7 @@ import (
 	"github.com/tarm/serial"
 )
 
-//go:generate go run scripts/includetxt.go static/index.html static/arduino.ino static/arduino.jpg main.go
+//go:generate go run scripts/includetxt.go static/index.html static/arduino.ino static/arduino.jpg main.go sds011.go
 
 func p(err error) {
 	if err != nil {
@@ -156,7 +156,7 @@ func (d *decoder) add(b []byte) {
 		{
 			res := d.rxPm.FindAllStringSubmatch(s, -1)
 			for i := range res {
-				//fmt.Printf("%v - %s, %s\n", res[i][0], res[i][1], res[i][2])
+				fmt.Printf("%v - %s, %s\n", res[i][0], res[i][1], res[i][2])
 
 				fa, err := strconv.ParseFloat(res[i][1], 64)
 				if err != nil {
