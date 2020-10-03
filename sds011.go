@@ -12,9 +12,6 @@ type SDS011 struct {
 	pm10_serial int
 	pm25_serial int
 	checksum    int
-	checksum_ok bool
-
-	iobuf []byte
 }
 
 func (s *SDS011) Read(b byte) bool {
