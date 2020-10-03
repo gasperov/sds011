@@ -22,6 +22,12 @@ import (
 
 //go:generate go run scripts/includetxt.go static/index.html static/arduino.ino static/arduino.jpg main.go
 
+func p(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 type values struct {
 	Last    string    `json:"last"`
 	Started int64     `json:"started"`
@@ -52,16 +58,13 @@ type decoder struct {
 
 func NewDecoder() decoder {
 	ret := decoder{}
-	ret.rxPm = regexp.MustCompile(`ug/m3 PM2\.5=(\d+\.\d\d), PM10=(\d+\.\d\d)`)
+	ret.rxPm = regexp.MustCompile(`ug/m3 PM2\.5=(\d+\.\d+), PM10=(\d+\.\d+)`)
 	ret.rxTs = regexp.MustCompile(`ts=(\d+)`)
 	ret.mutex = &sync.Mutex{}
 
 	{
 		files, err := ioutil.ReadDir(".")
-		if err != nil {
-			panic(err)
-		}
-
+		p(err)
 		for _, file := range files {
 			ret.addFile(file.Name())
 		}
@@ -75,9 +78,7 @@ func NewDecoder() decoder {
 	fn := fmt.Sprintf("sds011_%v.dat", now)
 	var err error
 	ret.out, err = os.Create(fn)
-	if err != nil {
-		panic(err)
-	}
+	p(err)
 	return ret
 }
 func (d *decoder) get() values {
@@ -108,9 +109,7 @@ func (d *decoder) addFile(f string) {
 		d.start = ts
 	}
 	data, err := ioutil.ReadFile(f)
-	if err != nil {
-		panic(err)
-	}
+	p(err)
 	d.add(data)
 }
 func (d *decoder) nextLine() string {
@@ -157,7 +156,7 @@ func (d *decoder) add(b []byte) {
 		{
 			res := d.rxPm.FindAllStringSubmatch(s, -1)
 			for i := range res {
-				//fmt.Printf("%v - pm2: %s, pm5: %s\n", res[i][0], res[i][1], res[i][2])
+				//fmt.Printf("%v - %s, %s\n", res[i][0], res[i][1], res[i][2])
 
 				fa, err := strconv.ParseFloat(res[i][1], 64)
 				if err != nil {
@@ -208,25 +207,40 @@ func main() {
 	if len(os.Args) > 1 {
 		fmt.Printf("opening port %v\n", os.Args[1])
 		go func() {
+			dely := 0
+			if len(os.Args) > 2 {
+				d, err := strconv.ParseInt(os.Args[2], 10, 32)
+				p(err)
+				dely = int(d)
+			}
+
+			sds := SDS011{}
 			config := &serial.Config{
 				Name:        os.Args[1], //"com3",
-				Baud:        57600,
-				ReadTimeout: time.Second * 5,
+				Baud:        9600,       //57600,
+				ReadTimeout: time.Minute * 30,
 				Size:        8,
 			}
 
 			stream, err := serial.OpenPort(config)
-			if err != nil {
-				panic(err)
-			}
+			p(err)
 
+			time.Sleep(4 * time.Second)
+			first := true
+			_, err = stream.Write(sds.SetPeriod(dely))
+			p(err)
 			buf := make([]byte, 1024)
 			for {
 				n, err := stream.Read(buf)
-				if err != nil {
-					panic(err)
+				p(err)
+				if sds.ReadBytes(buf[:n]) {
+					dec.add([]byte(fmt.Sprintf("ug/m3 PM2.5=%v, PM10=%v\n", sds.PM25, sds.PM10)))
+					if first {
+						first = false
+						_, err = stream.Write(sds.SetPeriod(dely))
+						p(err)
+					}
 				}
-				dec.add(buf[:n])
 			}
 		}()
 	}
@@ -266,9 +280,7 @@ func main() {
 		w.WriteHeader(http.StatusCreated)
 		if val, ok := static_files[fn]; ok {
 			data, err := hex.DecodeString(val)
-			if err != nil {
-				panic(err)
-			}
+			p(err)
 			w.Write(data)
 			return
 		}
