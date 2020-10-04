@@ -58,7 +58,7 @@ type decoder struct {
 
 func NewDecoder() decoder {
 	ret := decoder{}
-	ret.rxPm = regexp.MustCompile(`ug/m3 PM2\.5=(\d+\.\d+), PM10=(\d+\.\d+)`)
+	ret.rxPm = regexp.MustCompile(`ug/m3 PM2\.5=(\d+\.\d\d), PM10=(\d+\.\d\d)`)
 	ret.rxTs = regexp.MustCompile(`ts=(\d+)`)
 	ret.mutex = &sync.Mutex{}
 
@@ -113,22 +113,25 @@ func (d *decoder) addFile(f string) {
 	d.add(data)
 }
 func (d *decoder) nextLine() string {
+	if len(d.buf) > 1024 {
+		d.buf = d.buf[64:]
+	}
+	if 2048 > cap(d.buf) {
+		n := make([]byte, len(d.buf))
+		copy(n, d.buf)
+		d.buf = n
+	}
+
 	for {
 		pos := bytes.IndexByte(d.buf, 10) // find new line \n
 		if pos == -1 {
-			if len(d.buf) > 1024 {
-				d.buf = append([]byte(nil), d.buf[64:]...)
-			}
 			return ""
 		}
-
-		b := append([]byte(nil), d.buf[pos+1:]...)
+		b := d.buf
+		d.buf = d.buf[pos+1:]
 		if pos > 0 {
-			s := string(d.buf[:pos])
-			d.buf = b
-			return s
+			return string(b[:pos])
 		}
-		d.buf = b
 	}
 }
 func (d *decoder) add(b []byte) {
@@ -156,7 +159,7 @@ func (d *decoder) add(b []byte) {
 		{
 			res := d.rxPm.FindAllStringSubmatch(s, -1)
 			for i := range res {
-				fmt.Printf("%v - %s, %s\n", res[i][0], res[i][1], res[i][2])
+				//fmt.Printf("%s: %v - %s, %s\n", time.Now(), res[i][0], res[i][1], res[i][2])
 
 				fa, err := strconv.ParseFloat(res[i][1], 64)
 				if err != nil {
@@ -168,36 +171,41 @@ func (d *decoder) add(b []byte) {
 					fmt.Printf("invalid input: %s\n", res[i][2])
 					continue
 				}
-
-				var ts int64
-				if d.out == nil {
-					ts = d.lastTs
-					d.lastTs += 990 // assume arduino/sensor will dump 1/s
-				} else {
-					ts = getTs()
-					if (ts - d.lastTs) > 60000 {
-						d.lastTs = ts
-						d.out.Write([]byte(fmt.Sprintf("ts=%v\n", ts)))
-					}
-					d.out.Write([]byte(fmt.Sprintf("%v\n", res[i][0])))
-				}
-				//fmt.Printf("%v\n", ts)
-
-				func() {
-					d.mutex.Lock()
-					defer d.mutex.Unlock()
-					d.lastMsg = res[i][0]
-					d.pm25 = append(d.pm25, fa)
-					d.pm10 = append(d.pm10, fb)
-					d.ts = append(d.ts, ts-d.start)
-					if len(d.pm25) > 30*24*60*60 {
-						d.pm25 = append([]float64(nil), d.pm25[3600:]...)
-						d.pm10 = append([]float64(nil), d.pm10[3600:]...)
-						d.ts = append([]int64(nil), d.ts[3600:]...)
-					}
-				}()
+				d.addPoint(fa, fb, res[i][0])
+			}
+			if len(res) == 0 {
+				fmt.Printf("not found: %s\n", s)
 			}
 		}
+	}
+
+}
+
+func (d *decoder) addPoint(pm25, pm10 float64, ln string) {
+	var ts int64
+	if d.out == nil {
+		ts = d.lastTs
+		d.lastTs += 990 // assume arduino/sensor will dump 1/s
+	} else {
+		ts = getTs()
+		if (ts - d.lastTs) > 50000 {
+			d.lastTs = ts
+			d.out.Write([]byte(fmt.Sprintf("ts=%v\n", ts)))
+		}
+		d.out.Write([]byte(fmt.Sprintf("%v\n", ln)))
+	}
+	//fmt.Printf("%v\n", ts)
+
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.lastMsg = ln
+	d.pm25 = append(d.pm25, pm25)
+	d.pm10 = append(d.pm10, pm10)
+	d.ts = append(d.ts, ts-d.start)
+	if len(d.pm25) > 30*24*60*60 {
+		d.pm25 = append([]float64(nil), d.pm25[3600:]...)
+		d.pm10 = append([]float64(nil), d.pm10[3600:]...)
+		d.ts = append([]int64(nil), d.ts[3600:]...)
 	}
 }
 
@@ -214,7 +222,7 @@ func main() {
 				dely = int(d)
 			}
 
-			sds := SDS011{}
+			sds := NewSDS011()
 			config := &serial.Config{
 				Name:        os.Args[1], //"com3",
 				Baud:        9600,       //57600,
@@ -234,7 +242,8 @@ func main() {
 				n, err := stream.Read(buf)
 				p(err)
 				if sds.ReadBytes(buf[:n]) {
-					dec.add([]byte(fmt.Sprintf("ug/m3 PM2.5=%v, PM10=%v\n", sds.PM25, sds.PM10)))
+					//fmt.Printf("%s r\n", time.Now())
+					dec.add([]byte(fmt.Sprintf("ug/m3 PM2.5=%.2f, PM10=%.2f\n", sds.PM25, sds.PM10)))
 					if first {
 						first = false
 						_, err = stream.Write(sds.SetPeriod(dely))
