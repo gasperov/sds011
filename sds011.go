@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 )
 
 type SDS011 struct {
@@ -12,9 +13,21 @@ type SDS011 struct {
 	pm10_serial int
 	pm25_serial int
 	checksum    int
+
+	dbg []byte
+}
+
+func NewSDS011() SDS011 {
+	ret := SDS011{}
+	ret.dbg = []byte{}
+	return ret
 }
 
 func (s *SDS011) Read(b byte) bool {
+	s.dbg = append(s.dbg, b)
+	if len(s.dbg) > 12 {
+		s.dbg = append([]byte{}, s.dbg[1:]...)
+	}
 	value := int(b)
 	switch s.len {
 	case (0):
@@ -60,6 +73,9 @@ func (s *SDS011) Read(b byte) bool {
 		}
 		break
 	}
+	if s.len == -1 {
+		fmt.Printf("buf error %v\n", s.dbg)
+	}
 	s.len++
 	if s.len == 10 {
 		s.PM10 = float64(s.pm10_serial) / 10.0
@@ -68,6 +84,8 @@ func (s *SDS011) Read(b byte) bool {
 		s.pm10_serial = 0.0
 		s.pm25_serial = 0.0
 		s.checksum = 0
+		s.dbg = []byte{}
+		//fmt.Printf("have %v, %v\n", s.PM10, s.PM25)
 		return true
 	}
 
